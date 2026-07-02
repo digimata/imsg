@@ -11,6 +11,7 @@ use imessage_database::{
 use serde::{Serialize, Serializer};
 
 use crate::attachments::{AttachmentInfo, attachments_for};
+use crate::blocklist::BlockSet;
 use crate::chats::apple_ns_to_local;
 use crate::contacts::ContactBook;
 use crate::db::Db;
@@ -148,10 +149,17 @@ pub(crate) fn ser_opt_date<S: Serializer>(
 }
 
 /// Fetch messages matching `q`, newest-first internally, returned in
-/// chronological order with text decoded and tapbacks folded in.
-pub fn fetch(db: &Db, book: &ContactBook, q: &MessageQuery) -> Result<Vec<Msg>> {
+/// chronological order with text decoded and tapbacks folded in. Blocked
+/// chats and senders are excluded at the SQL layer.
+pub fn fetch(
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+    q: &MessageQuery,
+) -> Result<Vec<Msg>> {
     let handles: HashMap<i32, String> = crate::chats::handle_rows(db)?.into_iter().collect();
     let mut clauses = vec![format!("NOT ({TAPBACK_RANGE})")];
+    clauses.extend(blocks.sql_clauses());
     push_common_clauses(db, q, &mut clauses);
     if q.attachments_only {
         clauses.push(

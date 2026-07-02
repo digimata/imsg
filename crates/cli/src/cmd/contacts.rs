@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use imsg_core::{ContactBook, Db};
+use imsg_core::{BlockSet, ContactBook, Db};
 use serde::Serialize;
 
 use crate::render;
@@ -26,10 +26,15 @@ struct Resolution {
 }
 
 /// Dispatch `imsg contacts ...`.
-pub fn run(cmd: &ContactsCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()> {
+pub fn run(
+    cmd: &ContactsCmd,
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+) -> anyhow::Result<()> {
     match cmd {
         ContactsCmd::List { json } => {
-            let rows = imsg_core::chats::handle_message_counts(db, book)?;
+            let rows = imsg_core::chats::handle_message_counts(db, book, blocks)?;
             if *json {
                 render::json(&rows)?;
             } else {
@@ -45,7 +50,7 @@ pub fn run(cmd: &ContactsCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()>
             }
         }
         ContactsCmd::Resolve { query, json } => {
-            let (label, chat_ids) = imsg_core::chats::resolve_selector(db, book, query)?;
+            let (label, chat_ids) = imsg_core::chats::resolve_selector(db, book, blocks, query)?;
             if *json {
                 render::json(&Resolution { label, chat_ids })?;
             } else {

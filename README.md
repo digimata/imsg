@@ -48,6 +48,8 @@ imsg
   doctor                                            # DB access, schema, decode rate
 ```
 
+A blocklist at `~/.config/imsg/blocklist` hides chosen conversations from every command — see [Blocklist](#blocklist).
+
 ### Examples
 
 ```sh
@@ -91,6 +93,12 @@ Safety properties:
 ### Unread
 
 `--unread` filters to inbound messages you haven't read; without `--contact`/`--chat` it sweeps every chat, which makes `imsg messages list --unread --since 2w` a one-shot triage. `chats list` carries the same count per chat. Caveat: messages predating read receipts can sit at `is_read = 0` forever, so pair with `--since` and treat counts as an upper bound. Read-only like everything else — imsg never marks anything read.
+
+### Blocklist
+
+`~/.config/imsg/blocklist` lists conversations imsg refuses to touch — one entry per line: a contact name, phone, email, or `chat:<id>` (`#` for comments). Enforcement is deny-by-default in core, so every surface respects it: blocked chats vanish from `chats list`, message/search/unread/attachment queries exclude them at the SQL layer, any group containing a blocked contact is hidden entirely, and `send` refuses (exit 2). `imsg doctor` reports how much is hidden without saying what.
+
+Honest scope: this governs the imsg tool, not the database — anything with Full Disk Access can still read `chat.db` directly. It's a guardrail for agents driving imsg, not encryption.
 
 ### Dates
 

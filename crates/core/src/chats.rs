@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Local, TimeZone};
 use serde::Serialize;
 
+use crate::blocklist::BlockSet;
 use crate::contacts::{ContactBook, normalize_handle};
 use crate::db::Db;
 use crate::error::{Error, Result};
@@ -31,8 +32,13 @@ pub struct ChatSummary {
     pub is_group: bool,
 }
 
-/// List chats ordered by most recent activity.
-pub fn list(db: &Db, book: &ContactBook, limit: usize) -> Result<Vec<ChatSummary>> {
+/// List chats ordered by most recent activity. Blocked chats are omitted.
+pub fn list(
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+    limit: usize,
+) -> Result<Vec<ChatSummary>> {
     let participants = participants_by_chat(db, book)?;
     let mut stmt = db.conn().prepare(
         "SELECT c.ROWID, c.chat_identifier, c.service_name, c.display_name,
@@ -62,6 +68,9 @@ pub fn list(db: &Db, book: &ContactBook, limit: usize) -> Result<Vec<ChatSummary
     let mut chats = Vec::new();
     for row in rows {
         let (id, identifier, service, display_name, count, last_ns, unread) = row?;
+        if blocks.blocks_chat(id) {
+            continue;
+        }
         chats.push(summarize(
             db,
             book,
@@ -78,8 +87,11 @@ pub fn list(db: &Db, book: &ContactBook, limit: usize) -> Result<Vec<ChatSummary
     Ok(chats)
 }
 
-/// Show a single chat by rowid.
-pub fn show(db: &Db, book: &ContactBook, id: i32) -> Result<ChatSummary> {
+/// Show a single chat by rowid. Blocked chats error.
+pub fn show(db: &Db, book: &ContactBook, blocks: &BlockSet, id: i32) -> Result<ChatSummary> {
+    if blocks.blocks_chat(id) {
+        return Err(Error::Blocked(format!("chat {id}")));
+    }
     let participants = participants_by_chat(db, book)?;
     let mut stmt = db.conn().prepare(
         "SELECT c.chat_identifier, c.service_name, c.display_name,
@@ -125,9 +137,18 @@ pub fn show(db: &Db, book: &ContactBook, id: i32) -> Result<ChatSummary> {
 ///
 /// Resolution order: AddressBook contacts (fuzzy), then raw chat.db handles.
 /// More than one distinct match is an error carrying the candidates so the
-/// caller can retry precisely.
-pub fn resolve_selector(db: &Db, book: &ContactBook, query: &str) -> Result<(String, Vec<i32>)> {
+/// caller can retry precisely. Blocked contacts error explicitly; blocked
+/// chats are dropped from the result.
+pub fn resolve_selector(
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+    query: &str,
+) -> Result<(String, Vec<i32>)> {
     let matches = book.resolve(query);
+    if matches.iter().any(|m| blocks.blocks_any_key(&m.keys)) {
+        return Err(Error::Blocked(query.to_string()));
+    }
     if matches.len() > 1 {
         return Err(Error::AmbiguousContact {
             query: query.to_string(),
@@ -146,7 +167,10 @@ pub fn resolve_selector(db: &Db, book: &ContactBook, query: &str) -> Result<(Str
         if rowids.is_empty() {
             return Err(Error::NoMatch(query.to_string()));
         }
-        let chats = chats_for_handle_rowids(db, &rowids)?;
+        let chats = unblocked(chats_for_handle_rowids(db, &rowids)?, blocks);
+        if chats.is_empty() {
+            return Err(Error::NoMatch(query.to_string()));
+        }
         return Ok((found.name, chats));
     }
     // Fall back to matching raw handles in chat.db (contact-less numbers).
@@ -157,6 +181,9 @@ pub fn resolve_selector(db: &Db, book: &ContactBook, query: &str) -> Result<(Str
         .iter()
         .filter(|(_, id)| normalize_handle(id).is_some_and(|k| k.contains(&key)))
         .collect();
+    if matched.iter().any(|(_, id)| blocks.blocks_handle(id)) {
+        return Err(Error::Blocked(query.to_string()));
+    }
     let mut distinct: Vec<String> = matched.iter().map(|(_, id)| id.clone()).collect();
     distinct.sort();
     distinct.dedup();
@@ -164,7 +191,10 @@ pub fn resolve_selector(db: &Db, book: &ContactBook, query: &str) -> Result<(Str
         0 => Err(Error::NoMatch(query.to_string())),
         1 => {
             let rowids: Vec<i32> = matched.iter().map(|(rowid, _)| *rowid).collect();
-            let chats = chats_for_handle_rowids(db, &rowids)?;
+            let chats = unblocked(chats_for_handle_rowids(db, &rowids)?, blocks);
+            if chats.is_empty() {
+                return Err(Error::NoMatch(query.to_string()));
+            }
             Ok((distinct.remove(0), chats))
         }
         _ => Err(Error::AmbiguousContact {
@@ -172,6 +202,10 @@ pub fn resolve_selector(db: &Db, book: &ContactBook, query: &str) -> Result<(Str
             candidates: distinct,
         }),
     }
+}
+
+fn unblocked(chats: Vec<i32>, blocks: &BlockSet) -> Vec<i32> {
+    chats.into_iter().filter(|id| !blocks.blocks_chat(*id)).collect()
 }
 
 /// How a send should address its recipient.
@@ -195,9 +229,14 @@ pub enum SendTargetKind {
     Participant { handle: String },
 }
 
-/// Build a send target for an explicit chat rowid.
-pub fn send_target_for_chat(db: &Db, book: &ContactBook, id: i32) -> Result<SendTarget> {
-    let summary = show(db, book, id)?;
+/// Build a send target for an explicit chat rowid. Blocked chats error.
+pub fn send_target_for_chat(
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+    id: i32,
+) -> Result<SendTarget> {
+    let summary = show(db, book, blocks, id)?;
     let guid: String = db
         .conn()
         .prepare("SELECT guid FROM chat WHERE ROWID = ?1")?
@@ -218,8 +257,16 @@ pub fn send_target_for_chat(db: &Db, book: &ContactBook, id: i32) -> Result<Send
 /// busiest handle, or the query verbatim when it looks like a phone/email
 /// never messaged before. Group chats are never selected implicitly — use an
 /// explicit `--chat` id for those.
-pub fn send_target_for_contact(db: &Db, book: &ContactBook, query: &str) -> Result<SendTarget> {
+pub fn send_target_for_contact(
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+    query: &str,
+) -> Result<SendTarget> {
     let matches = book.resolve(query);
+    if matches.iter().any(|m| blocks.blocks_any_key(&m.keys)) || blocks.blocks_handle(query) {
+        return Err(Error::Blocked(query.to_string()));
+    }
     if matches.len() > 1 {
         return Err(Error::AmbiguousContact {
             query: query.to_string(),
@@ -234,7 +281,7 @@ pub fn send_target_for_contact(db: &Db, book: &ContactBook, query: &str) -> Resu
             .map(|(rowid, _)| *rowid)
             .collect();
         if let Some(target) = target_for_handle_rowids(db, &rowids, &found.name)? {
-            return Ok(target);
+            return guard_target(target, blocks, query);
         }
         // Known contact but no message history: only a raw handle is sendable.
         if looks_like_handle(query) {
@@ -255,9 +302,20 @@ pub fn send_target_for_contact(db: &Db, book: &ContactBook, query: &str) -> Resu
         .map(|(rowid, _)| *rowid)
         .collect();
     if let Some(target) = target_for_handle_rowids(db, &rowids, query)? {
-        return Ok(target);
+        return guard_target(target, blocks, query);
     }
     Ok(participant_target(query.to_string(), query))
+}
+
+/// Reject a resolved target whose chat is blocked by an explicit `chat:<id>`
+/// entry (contact-level blocks are checked before resolution).
+fn guard_target(target: SendTarget, blocks: &BlockSet, query: &str) -> Result<SendTarget> {
+    if let SendTargetKind::Chat { rowid, .. } = &target.kind
+        && blocks.blocks_chat(*rowid)
+    {
+        return Err(Error::Blocked(query.to_string()));
+    }
+    Ok(target)
 }
 
 /// Best target for a set of handle rowids: their most recently active 1:1
@@ -343,7 +401,11 @@ pub struct HandleCount {
 
 /// Handles that carry messages, merged by normalized key (e.g. `+1415...`
 /// vs `415...`), ordered by message volume descending.
-pub fn handle_message_counts(db: &Db, book: &ContactBook) -> Result<Vec<HandleCount>> {
+pub fn handle_message_counts(
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+) -> Result<Vec<HandleCount>> {
     let mut stmt = db.conn().prepare(
         "SELECT h.id, COUNT(m.ROWID) FROM handle h
          LEFT JOIN message m ON m.handle_id = h.ROWID
@@ -357,6 +419,9 @@ pub fn handle_message_counts(db: &Db, book: &ContactBook) -> Result<Vec<HandleCo
     let mut merged: HashMap<String, HandleCount> = HashMap::new();
     for (handle, count) in raw {
         let key = normalize_handle(&handle).unwrap_or_else(|| handle.clone());
+        if blocks.handle_keys.contains(&key) {
+            continue;
+        }
         let entry = merged.entry(key).or_insert_with(|| HandleCount {
             name: book.name_for(&handle).map(String::from),
             handle,

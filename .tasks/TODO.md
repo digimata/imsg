@@ -8,6 +8,13 @@
 
 ## Done
 
+- [x] **Blocklist** (2026.07.01) — `~/.config/imsg/blocklist` (names/phones/emails/`chat:<id>`,
+  `#` comments). Deny-by-default in core (`blocklist.rs` → `BlockSet` threaded through every
+  read/send path): blocked chats invisible everywhere, whole group hidden if a blocked contact
+  participates, send refuses, direct queries error `Blocked` (exit 2). Doctor reports counts
+  only. Guardrail for the sanctioned tool, not a security boundary (chat.db itself stays
+  readable with Full Disk Access).
+
 - [x] **Unread awareness** (2026.07.01) — `--unread` on `messages list` (sweeps all chats when
   no selector given; conflicts with `--from-me`) + UNREAD column in `chats list` and
   `unread_count` in `chats show`. Predicate: `is_read = 0 AND is_from_me = 0`, tapbacks

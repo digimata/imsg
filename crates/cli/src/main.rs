@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use imsg_core::{ContactBook, Db};
+use imsg_core::{BlockSet, ContactBook, Db};
 
 #[derive(Parser, Debug)]
 #[command(name = "imsg", version, about = "CLI over the local iMessage database (reads chat.db; sends via Messages.app)")]
@@ -62,12 +62,13 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
     }
     let db = Db::open(cli.db.as_deref())?;
     let book = ContactBook::load();
+    let blocks: BlockSet = imsg_core::blocklist::load_and_build(&db, &book)?;
     match &cli.cmd {
-        Cmd::Chats(c) => cmd::chats::run(c, &db, &book),
-        Cmd::Messages(c) => cmd::messages::run(c, &db, &book),
-        Cmd::Contacts(c) => cmd::contacts::run(c, &db, &book),
-        Cmd::Attachments(c) => cmd::attachments::run(c, &db, &book),
-        Cmd::Send(c) => cmd::send::run(c, &db, &book),
+        Cmd::Chats(c) => cmd::chats::run(c, &db, &book, &blocks),
+        Cmd::Messages(c) => cmd::messages::run(c, &db, &book, &blocks),
+        Cmd::Contacts(c) => cmd::contacts::run(c, &db, &book, &blocks),
+        Cmd::Attachments(c) => cmd::attachments::run(c, &db, &book, &blocks),
+        Cmd::Send(c) => cmd::send::run(c, &db, &book, &blocks),
         Cmd::Doctor => unreachable!("handled above"),
     }
 }

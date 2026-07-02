@@ -56,7 +56,12 @@ pub(crate) fn attachments_for(
 }
 
 /// List attachments across every message matching `q`, chronological order.
-pub fn list(db: &Db, book: &ContactBook, q: &MessageQuery) -> Result<Vec<AttachmentInfo>> {
+pub fn list(
+    db: &Db,
+    book: &ContactBook,
+    blocks: &crate::blocklist::BlockSet,
+    q: &MessageQuery,
+) -> Result<Vec<AttachmentInfo>> {
     let query = MessageQuery {
         chat_ids: q.chat_ids.clone(),
         since: q.since,
@@ -67,6 +72,6 @@ pub fn list(db: &Db, book: &ContactBook, q: &MessageQuery) -> Result<Vec<Attachm
         unread_only: q.unread_only,
         text_contains: None,
     };
-    let msgs = crate::messages::fetch(db, book, &query)?;
+    let msgs = crate::messages::fetch(db, book, blocks, &query)?;
     Ok(msgs.into_iter().flat_map(|m| m.attachments).collect())
 }

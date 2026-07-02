@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use imsg_core::{ContactBook, Db};
+use imsg_core::{BlockSet, ContactBook, Db};
 
 use crate::render;
 
@@ -21,10 +21,10 @@ pub enum ChatsCmd {
 }
 
 /// Dispatch `imsg chats ...`.
-pub fn run(cmd: &ChatsCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()> {
+pub fn run(cmd: &ChatsCmd, db: &Db, book: &ContactBook, blocks: &BlockSet) -> anyhow::Result<()> {
     match cmd {
         ChatsCmd::List { limit, json } => {
-            let chats = imsg_core::chats::list(db, book, *limit)?;
+            let chats = imsg_core::chats::list(db, book, blocks, *limit)?;
             if *json {
                 render::json(&chats)?;
             } else {
@@ -32,7 +32,7 @@ pub fn run(cmd: &ChatsCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()> {
             }
         }
         ChatsCmd::Show { id, json } => {
-            let chat = imsg_core::chats::show(db, book, *id)?;
+            let chat = imsg_core::chats::show(db, book, blocks, *id)?;
             if *json {
                 render::json(&chat)?;
             } else {

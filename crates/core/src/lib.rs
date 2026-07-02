@@ -4,12 +4,14 @@
 //! contact resolution, tapback folding, and query-shaped domain types.
 
 pub mod attachments;
+pub mod blocklist;
 pub mod chats;
 pub mod contacts;
 pub mod db;
 pub mod error;
 pub mod messages;
 
+pub use blocklist::BlockSet;
 pub use contacts::ContactBook;
 pub use db::Db;
 pub use error::{Error, Result};

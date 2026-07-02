@@ -39,6 +39,21 @@ pub fn run(db_path: Option<&Path>) -> anyhow::Result<()> {
             book.all().len()
         );
     }
+
+    let book = ContactBook::load();
+    let blocks = imsg_core::blocklist::load_and_build(&db, &book)?;
+    if blocks.is_empty() {
+        println!(
+            "ok    blocklist empty ({})",
+            imsg_core::blocklist::default_path().display()
+        );
+    } else {
+        println!(
+            "ok    blocklist active: {} chat(s) and {} handle(s) hidden",
+            blocks.chat_ids.len(),
+            blocks.handle_keys.len()
+        );
+    }
     Ok(())
 }
 
@@ -46,11 +61,12 @@ pub fn run(db_path: Option<&Path>) -> anyhow::Result<()> {
 fn report_decode_rate(db: &Db) -> anyhow::Result<()> {
     use imsg_core::messages::MessageQuery;
     let book = ContactBook::load();
+    let blocks = imsg_core::blocklist::load_and_build(db, &book)?;
     let q = MessageQuery {
         limit: 200,
         ..MessageQuery::default()
     };
-    let msgs = imsg_core::messages::fetch(db, &book, &q)?;
+    let msgs = imsg_core::messages::fetch(db, &book, &blocks, &q)?;
     if msgs.is_empty() {
         println!("warn  no messages to sample for decode rate");
         return Ok(());

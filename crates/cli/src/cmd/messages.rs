@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use imsg_core::{ContactBook, Db};
+use imsg_core::{BlockSet, ContactBook, Db};
 
 use crate::args::{Selector, Window};
 use crate::render;
@@ -40,7 +40,12 @@ pub enum MessagesCmd {
 }
 
 /// Dispatch `imsg messages ...`.
-pub fn run(cmd: &MessagesCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()> {
+pub fn run(
+    cmd: &MessagesCmd,
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+) -> anyhow::Result<()> {
     match cmd {
         MessagesCmd::List {
             selector,
@@ -53,14 +58,14 @@ pub fn run(cmd: &MessagesCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()>
         } => {
             let (label, chat_ids) = if *unread {
                 // Unread triage sweeps all chats by default.
-                selector.resolve(db, book)?
+                selector.resolve(db, book, blocks)?
             } else {
-                selector.resolve_required(db, book)?
+                selector.resolve_required(db, book, blocks)?
             };
             let mut q = window.to_query(chat_ids, *from_me, *from_them)?;
             q.attachments_only = *attachments_only;
             q.unread_only = *unread;
-            let msgs = imsg_core::messages::fetch(db, book, &q)?;
+            let msgs = imsg_core::messages::fetch(db, book, blocks, &q)?;
             if *json {
                 render::json(&msgs)?;
             } else {
@@ -74,10 +79,10 @@ pub fn run(cmd: &MessagesCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()>
             window,
             json,
         } => {
-            let (label, chat_ids) = selector.resolve(db, book)?;
+            let (label, chat_ids) = selector.resolve(db, book, blocks)?;
             let mut q = window.to_query(chat_ids, false, false)?;
             q.text_contains = Some(query.clone());
-            let msgs = imsg_core::messages::fetch(db, book, &q)?;
+            let msgs = imsg_core::messages::fetch(db, book, blocks, &q)?;
             if *json {
                 render::json(&msgs)?;
             } else {

@@ -23,6 +23,8 @@ pub enum Error {
     NoMatch(String),
     #[error("no chat with id {0}")]
     NoChat(i32),
+    #[error("'{0}' is on the imsg blocklist (~/.config/imsg/blocklist)")]
+    Blocked(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

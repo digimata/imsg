@@ -1,5 +1,5 @@
 use imsg_core::messages::{Direction, MessageQuery};
-use imsg_core::{ContactBook, Db, Error};
+use imsg_core::{BlockSet, ContactBook, Db, Error};
 
 use crate::dates::parse_date_arg;
 
@@ -16,13 +16,18 @@ pub struct Selector {
 
 impl Selector {
     /// Resolve to `(label, chat_ids)`. Empty selector → all chats.
-    pub fn resolve(&self, db: &Db, book: &ContactBook) -> anyhow::Result<(String, Vec<i32>)> {
+    pub fn resolve(
+        &self,
+        db: &Db,
+        book: &ContactBook,
+        blocks: &BlockSet,
+    ) -> anyhow::Result<(String, Vec<i32>)> {
         if let Some(id) = self.chat {
-            let chat = imsg_core::chats::show(db, book, id)?;
+            let chat = imsg_core::chats::show(db, book, blocks, id)?;
             return Ok((chat.name, vec![id]));
         }
         if let Some(contact) = &self.contact {
-            let resolved = imsg_core::chats::resolve_selector(db, book, contact)?;
+            let resolved = imsg_core::chats::resolve_selector(db, book, blocks, contact)?;
             return Ok(resolved);
         }
         Ok((String::from("all chats"), Vec::new()))
@@ -33,11 +38,12 @@ impl Selector {
         &self,
         db: &Db,
         book: &ContactBook,
+        blocks: &BlockSet,
     ) -> anyhow::Result<(String, Vec<i32>)> {
         if self.chat.is_none() && self.contact.is_none() {
             anyhow::bail!("pass --contact <name|phone|email> or --chat <id>");
         }
-        self.resolve(db, book)
+        self.resolve(db, book, blocks)
     }
 }
 
@@ -81,10 +87,16 @@ impl Window {
     }
 }
 
-/// Exit code for a failed run: 2 for ambiguous/no-match selectors, 1 otherwise.
+/// Exit code for a failed run: 2 for ambiguous/no-match/blocked selectors,
+/// 1 otherwise.
 pub fn exit_code_for(err: &anyhow::Error) -> i32 {
     match err.downcast_ref::<Error>() {
-        Some(Error::AmbiguousContact { .. } | Error::NoMatch(_) | Error::NoChat(_)) => 2,
+        Some(
+            Error::AmbiguousContact { .. }
+            | Error::NoMatch(_)
+            | Error::NoChat(_)
+            | Error::Blocked(_),
+        ) => 2,
         _ => 1,
     }
 }

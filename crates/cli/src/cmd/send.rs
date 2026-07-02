@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use clap::Args;
 use imsg_core::chats::{SendTarget, SendTargetKind};
 use imsg_core::messages::{self, SentReceipt};
-use imsg_core::{ContactBook, Db};
+use imsg_core::{BlockSet, ContactBook, Db};
 use serde::Serialize;
 
 use crate::{osascript, render};
@@ -45,10 +45,12 @@ struct SendReport<'a> {
 }
 
 /// Dispatch `imsg send`.
-pub fn run(cmd: &SendCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()> {
+pub fn run(cmd: &SendCmd, db: &Db, book: &ContactBook, blocks: &BlockSet) -> anyhow::Result<()> {
     let target = match (cmd.chat, &cmd.to) {
-        (Some(id), _) => imsg_core::chats::send_target_for_chat(db, book, id)?,
-        (None, Some(query)) => imsg_core::chats::send_target_for_contact(db, book, query)?,
+        (Some(id), _) => imsg_core::chats::send_target_for_chat(db, book, blocks, id)?,
+        (None, Some(query)) => {
+            imsg_core::chats::send_target_for_contact(db, book, blocks, query)?
+        }
         (None, None) => unreachable!("clap enforces --to or --chat"),
     };
     let dest = describe(&target);

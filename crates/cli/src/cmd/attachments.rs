@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use imsg_core::{ContactBook, Db};
+use imsg_core::{BlockSet, ContactBook, Db};
 
 use crate::args::{Selector, Window};
 use crate::render;
@@ -18,16 +18,21 @@ pub enum AttachmentsCmd {
 }
 
 /// Dispatch `imsg attachments ...`.
-pub fn run(cmd: &AttachmentsCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()> {
+pub fn run(
+    cmd: &AttachmentsCmd,
+    db: &Db,
+    book: &ContactBook,
+    blocks: &BlockSet,
+) -> anyhow::Result<()> {
     match cmd {
         AttachmentsCmd::List {
             selector,
             window,
             json,
         } => {
-            let (label, chat_ids) = selector.resolve_required(db, book)?;
+            let (label, chat_ids) = selector.resolve_required(db, book, blocks)?;
             let q = window.to_query(chat_ids, false, false)?;
-            let items = imsg_core::attachments::list(db, book, &q)?;
+            let items = imsg_core::attachments::list(db, book, blocks, &q)?;
             if *json {
                 render::json(&items)?;
             } else {
