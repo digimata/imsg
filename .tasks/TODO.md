@@ -2,11 +2,14 @@
 
 ## Backlog
 
-- [ ] **Send messages** — add `imsg send (--to <contact|handle> | --chat <id>) <text>` with
-  confirm-by-default (`--yes` to skip), `--dry-run`, `--json`. **Scoped and spike-verified
-  2026.07.01** — full design in `.plan/send-plan.md`. Route: osascript → Messages.app; target
-  existing chats by guid, fall back to account-qualified `participant` for first contact. Key
-  gotchas already proven live: bare `participant` sends silently no-op (exit 0, nothing delivered),
-  so every send must be verified by polling chat.db for the new row; account property reads throw
-  -10000 and need per-id try blocks. Send lives in the CLI crate; core gains only read-only
-  helpers (guid lookup, verify poll). Ready to implement.
+- [ ] **Send attachments** — `imsg send --attach <path>`. AppleScript supports
+  `send POSIX file "…" to …`; reuse the existing confirm/verify flow. Verify the attachment row
+  appears alongside the message. Deferred from send v1.
+
+## Done
+
+- [x] **Send messages** (2026.07.01) — `imsg send (--to <contact|handle> | --chat <id>) <text>`
+  with confirm-by-default, `--yes`, `--dry-run`, `--json`. Design in `.plan/send-plan.md`.
+  Implemented per plan: chat-guid targeting for existing chats, account-qualified participant
+  fallback for first contact, chat.db verify poll (osascript exit codes are meaningless), groups
+  only by explicit `--chat`. Live-verified both directions with a real conversation.

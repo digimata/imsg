@@ -1,6 +1,6 @@
 # imsg send — scoping & design
 
-status: scoped (spike verified live 2026.07.01)
+status: done (implemented and live-verified 2026.07.01)
 
 ## Feasibility: confirmed
 

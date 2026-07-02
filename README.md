@@ -1,6 +1,6 @@
 # imsg
 
-Read-only CLI over the local iMessage database (`~/Library/Messages/chat.db`). Built to give Claude (and humans) a clean, scriptable interface to message history: list chats, read conversations by contact name, search text, locate attachments. It never writes to the database and it cannot send messages.
+CLI over the local iMessage database (`~/Library/Messages/chat.db`). Built to give Claude (and humans) a clean, scriptable interface to messages: list chats, read conversations by contact name, search text, locate attachments — and send messages through Messages.app. Reading is strictly read-only against the database; sending never touches it (it goes through AppleScript, and Messages.app owns the write path).
 
 ## Why
 
@@ -40,6 +40,9 @@ imsg
   attachments list  (--contact ... | --chat <id>)
                     [--since <date>] [--limit N] [--json]
 
+  send              (--to <name|phone|email> | --chat <id>) <text>
+                    [--yes] [--dry-run] [--json]    # via Messages.app
+
   doctor                                            # DB access, schema, decode rate
 ```
 
@@ -64,6 +67,23 @@ Default output is a compact transcript, one message per line, tapbacks folded in
 ### Contact matching
 
 `--contact` accepts a name fragment (`mom`, `jake`), a phone number in any format, or an email. Ambiguous queries fail with exit code 2 and list the candidates — the tool never silently picks one.
+
+### Sending
+
+`imsg send` delivers through Messages.app via AppleScript — never by writing the database. It requires **Automation** permission for your terminal (System Settings → Privacy & Security → Automation → Messages) on top of Full Disk Access.
+
+```sh
+imsg send --to ross "running 10 late"        # confirms y/N before sending
+imsg send --chat 194 --yes "on my way"       # group chats by explicit id only
+imsg send --to "+14155551234" --dry-run "hi" # resolve + preview, don't send
+```
+
+Safety properties:
+
+- **Confirm by default** — interactive `y/N` prompt; non-interactive use refuses without `--yes`, so a script can never send by accident.
+- **Verified sends** — AppleScript exit codes are meaningless (mis-targeted sends no-op silently), so every send is confirmed by polling `chat.db` for the new outgoing row and reporting its `is_sent`/`error` state. No row within 10s is a hard error.
+- **No implicit group sends** — `--to` only ever targets a 1:1 chat (or creates one); groups require an explicit `--chat` id.
+- Message text is passed to `osascript` as an argument, never interpolated into script source.
 
 ### Dates
 
@@ -90,8 +110,8 @@ Default output is a compact transcript, one message per line, tapbacks folded in
 
 ## Guarantees
 
-- **Read-only**: the database is opened with SQLite read-only flags; there is no code path that writes to `chat.db` or the AddressBook.
-- **Local-only**: no network access; nothing leaves the machine.
+- **Read-only database**: `chat.db` and the AddressBook are opened with SQLite read-only flags; there is no code path that writes to either. Sending goes through Messages.app, which owns the write path.
+- **Local-only**: no network access of its own; nothing leaves the machine except messages you explicitly send.
 - Contact names resolve from the local AddressBook (`~/Library/Application Support/AddressBook`). If unavailable, raw handles are shown instead — everything still works.
 
 ## Architecture
@@ -101,7 +121,7 @@ Cargo workspace, two crates:
 | Crate | Path | Role |
 |---|---|---|
 | `imsg-core` | `crates/core` | DB access, typedstream decoding (via [`imessage-database`](https://crates.io/crates/imessage-database)), contact resolution, domain types |
-| `imsg` | `crates/cli` | clap CLI, transcript/JSON rendering |
+| `imsg` | `crates/cli` | clap CLI, transcript/JSON rendering, send (osascript wrapper + confirm/verify) |
 
 See `docs/impl-plan.md` for the full design.
 

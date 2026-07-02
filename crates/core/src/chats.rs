@@ -159,6 +159,165 @@ pub fn resolve_selector(db: &Db, book: &ContactBook, query: &str) -> Result<(Str
     }
 }
 
+/// How a send should address its recipient.
+#[derive(Debug, Serialize)]
+pub struct SendTarget {
+    /// Display label (contact name, chat name, or raw handle).
+    pub label: String,
+    pub service: String,
+    #[serde(flatten)]
+    pub kind: SendTargetKind,
+}
+
+/// Addressing mode for a send.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SendTargetKind {
+    /// An existing chat, targeted by AppleScript `chat id` (works for groups).
+    Chat { rowid: i32, guid: String },
+    /// A raw handle with no existing 1:1 chat; targeted by AppleScript
+    /// `participant` qualified with the iMessage account (creates the chat).
+    Participant { handle: String },
+}
+
+/// Build a send target for an explicit chat rowid.
+pub fn send_target_for_chat(db: &Db, book: &ContactBook, id: i32) -> Result<SendTarget> {
+    let summary = show(db, book, id)?;
+    let guid: String = db
+        .conn()
+        .prepare("SELECT guid FROM chat WHERE ROWID = ?1")?
+        .query_row([id], |row| row.get(0))
+        .map_err(|_| Error::NoChat(id))?;
+    Ok(SendTarget {
+        label: summary.name,
+        service: summary.service,
+        kind: SendTargetKind::Chat { rowid: id, guid },
+    })
+}
+
+/// Resolve a `--to` query (contact name, phone, or email) to a send target.
+///
+/// Resolution order mirrors [`resolve_selector`]: AddressBook contact first,
+/// then raw handles in chat.db. Prefers the recipient's most recently active
+/// 1:1 chat (guid targeting); falls back to a `participant` send with their
+/// busiest handle, or the query verbatim when it looks like a phone/email
+/// never messaged before. Group chats are never selected implicitly — use an
+/// explicit `--chat` id for those.
+pub fn send_target_for_contact(db: &Db, book: &ContactBook, query: &str) -> Result<SendTarget> {
+    let matches = book.resolve(query);
+    if matches.len() > 1 {
+        return Err(Error::AmbiguousContact {
+            query: query.to_string(),
+            candidates: matches.into_iter().map(|m| m.name).collect(),
+        });
+    }
+    let handles = handle_rows(db)?;
+    if let Some(found) = matches.into_iter().next() {
+        let rowids: Vec<i32> = handles
+            .iter()
+            .filter(|(_, id)| normalize_handle(id).is_some_and(|key| found.keys.contains(&key)))
+            .map(|(rowid, _)| *rowid)
+            .collect();
+        if let Some(target) = target_for_handle_rowids(db, &rowids, &found.name)? {
+            return Ok(target);
+        }
+        // Known contact but no message history: only a raw handle is sendable.
+        if looks_like_handle(query) {
+            return Ok(participant_target(found.name, query));
+        }
+        return Err(Error::NoMatch(query.to_string()));
+    }
+    // Not in the AddressBook: match raw handles by exact normalized key.
+    if !looks_like_handle(query) {
+        return Err(Error::NoMatch(query.to_string()));
+    }
+    let Some(key) = normalize_handle(query) else {
+        return Err(Error::NoMatch(query.to_string()));
+    };
+    let rowids: Vec<i32> = handles
+        .iter()
+        .filter(|(_, id)| normalize_handle(id).is_some_and(|k| k == key))
+        .map(|(rowid, _)| *rowid)
+        .collect();
+    if let Some(target) = target_for_handle_rowids(db, &rowids, query)? {
+        return Ok(target);
+    }
+    Ok(participant_target(query.to_string(), query))
+}
+
+/// Best target for a set of handle rowids: their most recently active 1:1
+/// chat, else a participant send with the busiest handle. `None` when the
+/// rowid set is empty.
+fn target_for_handle_rowids(
+    db: &Db,
+    rowids: &[i32],
+    label: &str,
+) -> Result<Option<SendTarget>> {
+    if rowids.is_empty() {
+        return Ok(None);
+    }
+    let placeholders = vec!["?"; rowids.len()].join(",");
+    // style = 45 is a 1:1 chat (43 = group).
+    let sql = format!(
+        "SELECT c.ROWID, c.guid, c.service_name FROM chat c
+         JOIN chat_handle_join j ON j.chat_id = c.ROWID
+         WHERE c.style = 45 AND j.handle_id IN ({placeholders})
+         ORDER BY (SELECT MAX(m.date) FROM chat_message_join cj
+                   JOIN message m ON m.ROWID = cj.message_id
+                   WHERE cj.chat_id = c.ROWID) DESC
+         LIMIT 1"
+    );
+    let mut stmt = db.conn().prepare(&sql)?;
+    let params = rusqlite::params_from_iter(rowids.iter());
+    let direct = stmt
+        .query_row(params, |row| {
+            Ok((
+                row.get::<_, i32>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map(Some)
+        .or_else(|err| match err {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    if let Some((rowid, guid, service)) = direct {
+        return Ok(Some(SendTarget {
+            label: label.to_string(),
+            service: service.unwrap_or_default(),
+            kind: SendTargetKind::Chat { rowid, guid },
+        }));
+    }
+    // No 1:1 chat (group-only history): send to their busiest handle.
+    let sql = format!(
+        "SELECT h.id FROM handle h
+         LEFT JOIN message m ON m.handle_id = h.ROWID
+         WHERE h.ROWID IN ({placeholders})
+         GROUP BY h.ROWID ORDER BY COUNT(m.ROWID) DESC LIMIT 1"
+    );
+    let mut stmt = db.conn().prepare(&sql)?;
+    let params = rusqlite::params_from_iter(rowids.iter());
+    let handle: String = stmt.query_row(params, |row| row.get(0))?;
+    Ok(Some(participant_target(label.to_string(), &handle)))
+}
+
+fn participant_target(label: String, handle: &str) -> SendTarget {
+    SendTarget {
+        label,
+        service: String::from("iMessage"),
+        kind: SendTargetKind::Participant {
+            handle: handle.trim().to_string(),
+        },
+    }
+}
+
+/// Heuristic used by send resolution: does the query look like a phone/email
+/// rather than a name fragment?
+fn looks_like_handle(query: &str) -> bool {
+    query.contains('@') || query.chars().filter(char::is_ascii_digit).count() >= 7
+}
+
 /// A message-bearing handle with its resolved name and message volume.
 #[derive(Debug, Serialize)]
 pub struct HandleCount {

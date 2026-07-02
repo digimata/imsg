@@ -1,8 +1,12 @@
-//! imsg — read-only CLI over the local iMessage database.
+//! imsg — CLI over the local iMessage database.
+//!
+//! Reading is read-only against chat.db by construction; sending goes
+//! through Messages.app via AppleScript and never writes the database.
 
 mod args;
 mod cmd;
 mod dates;
+mod osascript;
 mod render;
 
 use std::path::PathBuf;
@@ -12,7 +16,7 @@ use clap::{Parser, Subcommand};
 use imsg_core::{ContactBook, Db};
 
 #[derive(Parser, Debug)]
-#[command(name = "imsg", version, about = "Read-only CLI over the local iMessage database")]
+#[command(name = "imsg", version, about = "CLI over the local iMessage database (reads chat.db; sends via Messages.app)")]
 struct Cli {
     /// Path to chat.db (default: ~/Library/Messages/chat.db)
     #[arg(long, global = true)]
@@ -35,6 +39,8 @@ enum Cmd {
     /// List attachments
     #[command(subcommand)]
     Attachments(cmd::attachments::AttachmentsCmd),
+    /// Send a message via Messages.app (confirms before sending)
+    Send(cmd::send::SendCmd),
     /// Check database access, schema, and decode health
     Doctor,
 }
@@ -61,6 +67,7 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
         Cmd::Messages(c) => cmd::messages::run(c, &db, &book),
         Cmd::Contacts(c) => cmd::contacts::run(c, &db, &book),
         Cmd::Attachments(c) => cmd::attachments::run(c, &db, &book),
+        Cmd::Send(c) => cmd::send::run(c, &db, &book),
         Cmd::Doctor => unreachable!("handled above"),
     }
 }

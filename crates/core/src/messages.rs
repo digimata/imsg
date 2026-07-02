@@ -372,3 +372,75 @@ fn fold_tapbacks(
     }
     Ok(())
 }
+
+/// Delivery state of an outgoing message, read back from chat.db after a
+/// send. This is the only trustworthy send confirmation — AppleScript exit
+/// codes are meaningless (a mis-targeted send no-ops silently).
+#[derive(Debug, Serialize)]
+pub struct SentReceipt {
+    pub rowid: i64,
+    pub chat_id: i32,
+    #[serde(serialize_with = "ser_date")]
+    pub date: DateTime<Local>,
+    pub is_sent: bool,
+    pub error: i64,
+}
+
+/// Highest message rowid currently in the database. Recorded before a send
+/// so [`outgoing_after`] can spot the new row.
+pub fn max_rowid(db: &Db) -> Result<i64> {
+    let mut stmt = db.conn().prepare("SELECT COALESCE(MAX(ROWID), 0) FROM message")?;
+    Ok(stmt.query_row([], |row| row.get(0))?)
+}
+
+/// Newest outgoing message with rowid above `after_rowid` that landed in the
+/// given chat — matched by rowid, or by normalized chat identifier for
+/// participant sends where Messages may canonicalize the handle (and the
+/// chat rowid isn't known until it's created).
+pub fn outgoing_after(
+    db: &Db,
+    after_rowid: i64,
+    chat_rowid: Option<i32>,
+    chat_identifier: Option<&str>,
+) -> Result<Option<SentReceipt>> {
+    let ident_key = chat_identifier.and_then(crate::contacts::normalize_handle);
+    let mut stmt = db.conn().prepare(
+        "SELECT m.ROWID, j.chat_id, m.date, m.is_sent, m.error, c.chat_identifier
+         FROM message m
+         JOIN chat_message_join j ON j.message_id = m.ROWID
+         JOIN chat c ON c.ROWID = j.chat_id
+         WHERE m.is_from_me = 1 AND m.ROWID > ?1
+         ORDER BY m.ROWID DESC",
+    )?;
+    let rows = stmt.query_map([after_rowid], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i32>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, bool>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (rowid, chat_id, date_ns, is_sent, error, identifier) = row?;
+        let chat_hit = chat_rowid.is_some_and(|id| id == chat_id);
+        let ident_hit = ident_key
+            .as_ref()
+            .is_some_and(|key| crate::contacts::normalize_handle(&identifier).as_ref() == Some(key));
+        if !(chat_hit || ident_hit) {
+            continue;
+        }
+        let Some(date) = apple_ns_to_local(db, date_ns) else {
+            continue;
+        };
+        return Ok(Some(SentReceipt {
+            rowid,
+            chat_id,
+            date,
+            is_sent,
+            error,
+        }));
+    }
+    Ok(None)
+}
