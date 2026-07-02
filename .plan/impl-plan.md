@@ -1,7 +1,7 @@
 ---
 title: "imsg v1 — read-only iMessage CLI"
 date: 2026-07-01
-status: draft
+status: done
 affects: "new project — imsg workspace"
 ---
 
