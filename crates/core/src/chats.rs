@@ -22,6 +22,9 @@ pub struct ChatSummary {
     pub identifier: String,
     pub participants: Vec<Participant>,
     pub message_count: i64,
+    /// Inbound messages not yet read (tapbacks excluded). Messages predating
+    /// read receipts can sit unread forever, so treat as an upper bound.
+    pub unread_count: i64,
     #[serde(serialize_with = "crate::messages::ser_opt_date")]
     pub last_message_at: Option<DateTime<Local>>,
     pub service: String,
@@ -33,7 +36,11 @@ pub fn list(db: &Db, book: &ContactBook, limit: usize) -> Result<Vec<ChatSummary
     let participants = participants_by_chat(db, book)?;
     let mut stmt = db.conn().prepare(
         "SELECT c.ROWID, c.chat_identifier, c.service_name, c.display_name,
-                COUNT(j.message_id), MAX(m.date)
+                COUNT(j.message_id), MAX(m.date),
+                COUNT(CASE WHEN m.is_read = 0 AND m.is_from_me = 0
+                           AND COALESCE(m.associated_message_type, 0)
+                               NOT BETWEEN 2000 AND 3999
+                      THEN 1 END)
          FROM chat c
          LEFT JOIN chat_message_join j ON j.chat_id = c.ROWID
          LEFT JOIN message m ON m.ROWID = j.message_id
@@ -49,11 +56,12 @@ pub fn list(db: &Db, book: &ContactBook, limit: usize) -> Result<Vec<ChatSummary
             row.get::<_, Option<String>>(3)?,
             row.get::<_, i64>(4)?,
             row.get::<_, Option<i64>>(5)?,
+            row.get::<_, i64>(6)?,
         ))
     })?;
     let mut chats = Vec::new();
     for row in rows {
-        let (id, identifier, service, display_name, count, last_ns) = row?;
+        let (id, identifier, service, display_name, count, last_ns, unread) = row?;
         chats.push(summarize(
             db,
             book,
@@ -63,6 +71,7 @@ pub fn list(db: &Db, book: &ContactBook, limit: usize) -> Result<Vec<ChatSummary
             service,
             display_name,
             count,
+            unread,
             last_ns,
         ));
     }
@@ -74,7 +83,11 @@ pub fn show(db: &Db, book: &ContactBook, id: i32) -> Result<ChatSummary> {
     let participants = participants_by_chat(db, book)?;
     let mut stmt = db.conn().prepare(
         "SELECT c.chat_identifier, c.service_name, c.display_name,
-                COUNT(j.message_id), MAX(m.date)
+                COUNT(j.message_id), MAX(m.date),
+                COUNT(CASE WHEN m.is_read = 0 AND m.is_from_me = 0
+                           AND COALESCE(m.associated_message_type, 0)
+                               NOT BETWEEN 2000 AND 3999
+                      THEN 1 END)
          FROM chat c
          LEFT JOIN chat_message_join j ON j.chat_id = c.ROWID
          LEFT JOIN message m ON m.ROWID = j.message_id
@@ -89,10 +102,11 @@ pub fn show(db: &Db, book: &ContactBook, id: i32) -> Result<ChatSummary> {
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, Option<i64>>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         })
         .map_err(|_| Error::NoChat(id))?;
-    let (identifier, service, display_name, count, last_ns) = row;
+    let (identifier, service, display_name, count, last_ns, unread) = row;
     Ok(summarize(
         db,
         book,
@@ -102,6 +116,7 @@ pub fn show(db: &Db, book: &ContactBook, id: i32) -> Result<ChatSummary> {
         service,
         display_name,
         count,
+        unread,
         last_ns,
     ))
 }
@@ -403,6 +418,7 @@ fn summarize(
     service: Option<String>,
     display_name: Option<String>,
     message_count: i64,
+    unread_count: i64,
     last_ns: Option<i64>,
 ) -> ChatSummary {
     let members = participants.get(&id).cloned().unwrap_or_default();
@@ -419,6 +435,7 @@ fn summarize(
         identifier,
         participants: members,
         message_count,
+        unread_count,
         last_message_at,
         service: service.unwrap_or_default(),
         is_group,

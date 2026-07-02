@@ -64,6 +64,7 @@ pub fn list(db: &Db, book: &ContactBook, q: &MessageQuery) -> Result<Vec<Attachm
         limit: q.limit,
         direction: q.direction,
         attachments_only: true,
+        unread_only: q.unread_only,
         text_contains: None,
     };
     let msgs = crate::messages::fetch(db, book, &query)?;

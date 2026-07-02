@@ -75,6 +75,7 @@ impl Window {
             limit: self.limit,
             direction,
             attachments_only: false,
+            unread_only: false,
             text_contains: None,
         })
     }

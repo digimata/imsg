@@ -21,6 +21,9 @@ pub enum MessagesCmd {
         /// Only messages carrying attachments
         #[arg(long)]
         attachments_only: bool,
+        /// Only inbound messages not yet read
+        #[arg(long, conflicts_with = "from_me")]
+        unread: bool,
         #[arg(long)]
         json: bool,
     },
@@ -45,11 +48,18 @@ pub fn run(cmd: &MessagesCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()>
             from_me,
             from_them,
             attachments_only,
+            unread,
             json,
         } => {
-            let (label, chat_ids) = selector.resolve_required(db, book)?;
+            let (label, chat_ids) = if *unread {
+                // Unread triage sweeps all chats by default.
+                selector.resolve(db, book)?
+            } else {
+                selector.resolve_required(db, book)?
+            };
             let mut q = window.to_query(chat_ids, *from_me, *from_them)?;
             q.attachments_only = *attachments_only;
+            q.unread_only = *unread;
             let msgs = imsg_core::messages::fetch(db, book, &q)?;
             if *json {
                 render::json(&msgs)?;

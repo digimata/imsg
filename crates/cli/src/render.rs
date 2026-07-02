@@ -71,13 +71,18 @@ pub fn transcript(msgs: &[Msg]) {
 /// Render chat summaries as an aligned, grep-friendly table.
 pub fn chats_table(chats: &[ChatSummary]) {
     println!(
-        "{:>5}  {:<30} {:>6}  {:<16}  PARTICIPANTS",
-        "ID", "NAME", "MSGS", "LAST"
+        "{:>5}  {:<30} {:>6} {:>6}  {:<16}  PARTICIPANTS",
+        "ID", "NAME", "MSGS", "UNREAD", "LAST"
     );
     for c in chats {
         let last = c
             .last_message_at
             .map_or_else(|| "-".to_string(), |d| fmt_date(&d));
+        let unread = if c.unread_count == 0 {
+            "-".to_string()
+        } else {
+            c.unread_count.to_string()
+        };
         let participants = c
             .participants
             .iter()
@@ -85,10 +90,11 @@ pub fn chats_table(chats: &[ChatSummary]) {
             .collect::<Vec<_>>()
             .join(", ");
         println!(
-            "{:>5}  {:<30} {:>6}  {:<16}  {}",
+            "{:>5}  {:<30} {:>6} {:>6}  {:<16}  {}",
             c.id,
             truncate(&c.name, 30),
             c.message_count,
+            unread,
             last,
             participants
         );

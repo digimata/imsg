@@ -30,7 +30,9 @@ imsg
 
   messages list     (--contact <name|phone|email> | --chat <id>)
                     [--since <date>] [--until <date>] [--limit N]
-                    [--from-me | --from-them] [--attachments-only] [--json]
+                    [--from-me | --from-them] [--attachments-only]
+                    [--unread] [--json]          # --unread sweeps all chats
+                                                 # when no selector is given
   messages search   <query> [--contact ...] [--chat <id>]
                     [--since <date>] [--until <date>] [--limit N] [--json]
 
@@ -49,7 +51,8 @@ imsg
 ### Examples
 
 ```sh
-imsg chats list --limit 20
+imsg chats list --limit 20                       # includes an UNREAD column
+imsg messages list --unread --since 2w           # anything I haven't read?
 imsg messages list --contact mom --since 2026-06-01
 imsg messages search "dinner" --contact jake --limit 20
 imsg attachments list --chat 42 --json
@@ -84,6 +87,10 @@ Safety properties:
 - **Verified sends** — AppleScript exit codes are meaningless (mis-targeted sends no-op silently), so every send is confirmed by polling `chat.db` for the new outgoing row and reporting its `is_sent`/`error` state. No row within 10s is a hard error.
 - **No implicit group sends** — `--to` only ever targets a 1:1 chat (or creates one); groups require an explicit `--chat` id.
 - Message text is passed to `osascript` as an argument, never interpolated into script source.
+
+### Unread
+
+`--unread` filters to inbound messages you haven't read; without `--contact`/`--chat` it sweeps every chat, which makes `imsg messages list --unread --since 2w` a one-shot triage. `chats list` carries the same count per chat. Caveat: messages predating read receipts can sit at `is_read = 0` forever, so pair with `--since` and treat counts as an upper bound. Read-only like everything else — imsg never marks anything read.
 
 ### Dates
 

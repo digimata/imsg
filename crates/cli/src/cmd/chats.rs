@@ -40,6 +40,7 @@ pub fn run(cmd: &ChatsCmd, db: &Db, book: &ContactBook) -> anyhow::Result<()> {
                 println!("identifier:  {}", chat.identifier);
                 println!("service:     {}", chat.service);
                 println!("messages:    {}", chat.message_count);
+                println!("unread:      {}", chat.unread_count);
                 println!("group:       {}", chat.is_group);
                 println!("participants:");
                 for p in &chat.participants {

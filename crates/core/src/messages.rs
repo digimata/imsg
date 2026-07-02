@@ -51,6 +51,9 @@ pub struct MessageQuery {
     pub limit: usize,
     pub direction: Option<Direction>,
     pub attachments_only: bool,
+    /// Only inbound messages not yet read. Messages predating read receipts
+    /// can sit at `is_read = 0` forever, so pair with `since` when counting.
+    pub unread_only: bool,
     /// Case-insensitive body filter, applied after typedstream decoding.
     pub text_contains: Option<String>,
 }
@@ -155,6 +158,9 @@ pub fn fetch(db: &Db, book: &ContactBook, q: &MessageQuery) -> Result<Vec<Msg>> 
             "(SELECT COUNT(*) FROM message_attachment_join a WHERE m.ROWID = a.message_id) > 0"
                 .to_string(),
         );
+    }
+    if q.unread_only {
+        clauses.push("m.is_read = 0 AND m.is_from_me = 0".to_string());
     }
     let sql = format!(
         "{SELECT_HEAD}\nWHERE {}\nORDER BY m.date DESC",
